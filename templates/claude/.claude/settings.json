@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": ["Read files", "Edit files", "Run shell commands"],
+    "deny": []
+  },
+  "skills": {
+    "enabled": true,
+    "paths": [".claude/skills"]
+  }
+}

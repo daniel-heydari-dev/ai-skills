@@ -1,0 +1,312 @@
+/**
+ * Bridge Context Files
+ *
+ * Generates editor-specific context files that point to .ai/ as
+ * the single source of truth for AI configuration.
+ *
+ * Instead of duplicating content into each editor's config dir,
+ * we create one small "bridge" file per editor that says:
+ * "Read .ai/ for all AI instructions."
+ *
+ * This makes AI behavior portable — switch editors without losing anything.
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { AssistantConfig, ContentType } from "./types.js";
+import { CANONICAL_DIR } from "./agents.js";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface BridgeFile {
+  /** Editor this bridge file targets */
+  editorId: string;
+  /** File path relative to project root */
+  filePath: string;
+  /** File content */
+  content: string;
+  /** Short description */
+  description: string;
+}
+
+// ============================================================================
+// Bridge File Templates
+// ============================================================================
+
+/**
+ * Get all content subdirectories that actually exist in .ai/
+ */
+async function getExistingDirs(projectRoot: string): Promise<string[]> {
+  const aiDir = path.join(projectRoot, CANONICAL_DIR);
+  const types: ContentType[] = [
+    "skills",
+    "rules",
+    "agents",
+    "commands",
+    "prompts",
+  ];
+  const existing: string[] = [];
+
+  for (const type of types) {
+    try {
+      const stats = await fs.promises.stat(path.join(aiDir, type));
+      if (stats.isDirectory()) existing.push(type);
+    } catch {
+      // Doesn't exist
+    }
+  }
+
+  // Also check for context/ directory
+  try {
+    const stats = await fs.promises.stat(path.join(aiDir, "context"));
+    if (stats.isDirectory()) existing.push("context");
+  } catch {
+    // Doesn't exist
+  }
+
+  return existing;
+}
+
+/**
+ * Build a directory listing block for bridge files
+ */
+function buildDirectorySection(dirs: string[]): string {
+  if (dirs.length === 0) return "";
+
+  const lines = dirs.map((d) => `- \`.ai/${d}/\` — ${getDirDescription(d)}`);
+  return `\n## AI Configuration\n\nThis project uses \`.ai/\` as the single source of truth for AI behavior.\nAlways read and follow the guidelines in:\n\n${lines.join("\n")}\n`;
+}
+
+function getDirDescription(dir: string): string {
+  const descriptions: Record<string, string> = {
+    skills: "Coding best practices, patterns, and playbooks",
+    rules: "Hard constraints and conventions (always follow these)",
+    agents: "Specialized AI personas for specific tasks",
+    commands: "Reusable command templates and macros",
+    prompts: "Pre-built prompt templates",
+    context: "Project context, architecture, and domain knowledge",
+  };
+  return descriptions[dir] || dir;
+}
+
+/**
+ * Build the core instructions block (shared across all editors)
+ */
+function buildCoreInstructions(dirs: string[]): string {
+  const sections: string[] = [];
+
+  if (dirs.includes("rules")) {
+    sections.push(
+      "Before writing any code, read all files in `.ai/rules/`. These are hard constraints — never violate them.",
+    );
+  }
+
+  if (dirs.includes("skills")) {
+    sections.push(
+      "When working on code, check `.ai/skills/` for relevant guidelines. Apply matching skill files to your work.",
+    );
+  }
+
+  if (dirs.includes("context")) {
+    sections.push(
+      "For project context (architecture, conventions, domain), consult `.ai/context/`.",
+    );
+  }
+
+  if (dirs.includes("commands")) {
+    sections.push(
+      "Reusable command templates are in `.ai/commands/`. Use them when the user references a command by name.",
+    );
+  }
+
+  if (sections.length === 0) return "";
+
+  return `\n## Instructions\n\n${sections.join("\n\n")}\n`;
+}
+
+// ============================================================================
+// Editor-Specific Bridge Files
+// ============================================================================
+
+function claudeBridge(dirs: string[]): BridgeFile {
+  return {
+    editorId: "claude",
+    filePath: "CLAUDE.md",
+    description: "Claude Code context file",
+    content: `# CLAUDE.md
+${buildDirectorySection(dirs)}${buildCoreInstructions(dirs)}`,
+  };
+}
+
+function cursorBridge(dirs: string[]): BridgeFile {
+  return {
+    editorId: "cursor",
+    filePath: ".cursor/rules/ai-config.mdc",
+    description: "Cursor rules file",
+    content: `---
+description: AI configuration — read .ai/ for all guidelines
+globs:
+alwaysApply: true
+---
+${buildDirectorySection(dirs)}${buildCoreInstructions(dirs)}`,
+  };
+}
+
+function copilotBridge(dirs: string[]): BridgeFile {
+  return {
+    editorId: "copilot",
+    filePath: ".github/copilot-instructions.md",
+    description: "GitHub Copilot instructions",
+    content: `# Copilot Instructions
+${buildDirectorySection(dirs)}${buildCoreInstructions(dirs)}`,
+  };
+}
+
+function geminiBridge(dirs: string[]): BridgeFile {
+  return {
+    editorId: "gemini",
+    filePath: "GEMINI.md",
+    description: "Gemini CLI context file",
+    content: `# GEMINI.md
+${buildDirectorySection(dirs)}${buildCoreInstructions(dirs)}`,
+  };
+}
+
+function windsurfBridge(dirs: string[]): BridgeFile {
+  return {
+    editorId: "windsurf",
+    filePath: ".windsurfrules",
+    description: "Windsurf rules file",
+    content: `# Windsurf Rules
+${buildDirectorySection(dirs)}${buildCoreInstructions(dirs)}`,
+  };
+}
+
+function agentsBridge(dirs: string[]): BridgeFile {
+  return {
+    editorId: "universal",
+    filePath: "AGENTS.md",
+    description: "Universal agents context file (Codex, Amp, OpenCode, etc.)",
+    content: `# AGENTS.md
+${buildDirectorySection(dirs)}${buildCoreInstructions(dirs)}`,
+  };
+}
+
+// ============================================================================
+// Registry
+// ============================================================================
+
+/** All available bridge file generators, keyed by editor ID */
+const BRIDGE_GENERATORS: Record<string, (dirs: string[]) => BridgeFile> = {
+  claude: claudeBridge,
+  cursor: cursorBridge,
+  copilot: copilotBridge,
+  gemini: geminiBridge,
+  windsurf: windsurfBridge,
+  universal: agentsBridge,
+};
+
+/** Map assistant IDs to bridge generator keys */
+const ASSISTANT_TO_BRIDGE: Record<string, string> = {
+  claude: "claude",
+  cursor: "cursor",
+  copilot: "copilot",
+  gemini: "gemini",
+  antigravity: "gemini",
+  windsurf: "windsurf",
+  codex: "universal",
+  amp: "universal",
+  opencode: "universal",
+  cline: "universal",
+  roo: "universal",
+  continue: "universal",
+  goose: "universal",
+  kiro: "universal",
+  trae: "universal",
+  augment: "universal",
+  droid: "universal",
+  kilo: "universal",
+};
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+/**
+ * Generate bridge files for the given assistants.
+ * Deduplicates (e.g., won't write AGENTS.md twice if both Codex and Amp are detected).
+ */
+export async function generateBridgeFiles(
+  assistants: AssistantConfig[],
+  projectRoot: string = process.cwd(),
+): Promise<BridgeFile[]> {
+  const dirs = await getExistingDirs(projectRoot);
+  if (dirs.length === 0) {
+    // No .ai/ content yet — still generate with a default set
+    dirs.push("skills", "rules");
+  }
+
+  // Collect unique bridge types needed
+  const bridgeKeys = new Set<string>();
+  for (const assistant of assistants) {
+    const key = ASSISTANT_TO_BRIDGE[assistant.id];
+    if (key) bridgeKeys.add(key);
+  }
+
+  // Always include AGENTS.md for universal compatibility
+  bridgeKeys.add("universal");
+
+  // Generate bridge files
+  const files: BridgeFile[] = [];
+  for (const key of bridgeKeys) {
+    const generator = BRIDGE_GENERATORS[key];
+    if (generator) {
+      files.push(generator(dirs));
+    }
+  }
+
+  return files;
+}
+
+/**
+ * Write bridge files to disk. Only writes if file doesn't exist
+ * (never overwrites user-customized context files).
+ */
+export async function writeBridgeFiles(
+  files: BridgeFile[],
+  projectRoot: string = process.cwd(),
+  overwrite: boolean = false,
+): Promise<{ written: string[]; skipped: string[] }> {
+  const written: string[] = [];
+  const skipped: string[] = [];
+
+  for (const file of files) {
+    const fullPath = path.join(projectRoot, file.filePath);
+
+    // Don't overwrite existing files unless explicitly asked
+    if (!overwrite) {
+      try {
+        await fs.promises.access(fullPath);
+        skipped.push(file.filePath);
+        continue;
+      } catch {
+        // File doesn't exist — safe to write
+      }
+    }
+
+    await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.promises.writeFile(fullPath, file.content, "utf-8");
+    written.push(file.filePath);
+  }
+
+  return { written, skipped };
+}
+
+/**
+ * Get all available bridge file types
+ */
+export function getAvailableBridgeTypes(): string[] {
+  return Object.keys(BRIDGE_GENERATORS);
+}
